@@ -39,6 +39,7 @@ COPY prompts /app/prompts
 COPY workflows /app/workflows
 
 # Port is configured via the AGENT_PORT environment variable (default 8000).
+ARG AGENT_PORT=8000
 EXPOSE ${AGENT_PORT}
 
 CMD ["python", "agent.py"]
