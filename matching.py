@@ -20,10 +20,21 @@ SYNONYMS = {
     "speed": {"speed", "velocity"},
     "harvest": {"harvest", "yield", "yields"},
 }
+QUANTIFIERS = {
+    "all", "each", "every", "both", "any", "respective", "individual", "separate", "three",
+}
+AGGREGATE = {
+    "total", "totals", "sum", "overall", "combined", "aggregate", "cumulative", "average", "mean",
+}
+
+
+def raw_words(text: str) -> set[str]:
+    """Normalize without removing stopwords; quantifiers like 'all' live here."""
+    return set(re.findall(r"\w+", unicodedata.normalize("NFKC", text).casefold()))
 
 
 def tokens(text: str) -> set[str]:
-    words = set(re.findall(r"\w+", unicodedata.normalize("NFKC", text).casefold()))
+    words = raw_words(text)
     for concept, synonyms in SYNONYMS.items():
         if words & synonyms:
             words.add(concept)
@@ -68,6 +79,54 @@ def match_column(columns: list[str], query: str) -> str | None:
     best = max((score for score, _ in scores), default=0)
     winners = [column for score, column in scores if score == best and score > 0]
     return winners[0] if len(winners) == 1 else None
+
+
+def is_aggregate(column: str) -> bool:
+    """Totals/averages are excluded from collective expansion unless asked for."""
+    return bool(raw_words(base_name(column).replace("_", " ")) & AGGREGATE)
+
+
+def is_collective(query: str, columns: list[str]) -> bool:
+    """A request names a group, not one column: 'all villages', bare 'villages'."""
+    words = raw_words(query)
+    if words & QUANTIFIERS:
+        return True
+    content = words - STOPWORDS
+    for word in content:
+        if word.endswith("s") and len(word) > 3:
+            singular = word[:-2] if word.endswith("ies") else word[:-1]
+            if match_column(columns, word) is None and match_column(columns, singular) is None:
+                return True
+    return False
+
+
+def expand_columns(columns: list[str], numeric: list[str], query: str, x: str | None) -> list[str]:
+    """Expand a collective y request ('all villages') to the matching numeric columns."""
+    if not is_collective(query, columns):
+        return []
+    pool = [column for column in numeric if column != x]
+    if not pool:
+        return []
+    words = raw_words(query)
+    base = pool if words & AGGREGATE else [c for c in pool if not is_aggregate(c)] or pool
+    requested = tokens(query)
+    overlap = [column for column in base if requested & column_tokens(column)]
+    quantified = bool(words & QUANTIFIERS)
+    return overlap if (len(overlap) >= 2 or (len(overlap) == 1 and not quantified)) else base
+
+
+def series_presets(numeric: list[str], x: str | None) -> list[tuple[str, list[str]]]:
+    """Deterministic group options offered alongside single columns in the y dropdown."""
+    pool = [column for column in numeric if column != x]
+    plain = [column for column in pool if not is_aggregate(column)]
+    aggregates = [column for column in pool if is_aggregate(column)]
+    presets = []
+    if len(plain) >= 2:
+        presets.append((f"All {len(plain)} series ({', '.join(plain)})", plain))
+    if aggregates and len(pool) >= 2:
+        label = f"All {len(pool)} series including {', '.join(aggregates)} ({', '.join(pool)})"
+        presets.append((label, pool))
+    return presets
 
 
 def match_table(tables: list[Table], query: str) -> int | None:

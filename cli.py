@@ -4,8 +4,26 @@ import argparse
 import json
 from pathlib import Path
 
-from matching import match_column, match_table
+from matching import expand_columns, match_column, match_table
 from tables import Table, parse_csv, parse_markdown
+
+
+def resolve_y_columns(table: Table, x: str | None, requests: list[str]) -> tuple[list[str], list[str]]:
+    """Resolve each --y request to real columns; collective phrases expand to a group."""
+    numeric = table.numeric_columns()
+    resolved: list[str] = []
+    unresolved: list[str] = []
+    for request in requests:
+        column = match_column(table.columns, request)
+        if column and column in numeric and column != x:
+            resolved.append(column)
+            continue
+        expanded = expand_columns(table.columns, numeric, request, x)
+        if expanded:
+            resolved.extend(expanded)
+            continue
+        unresolved.append(request)
+    return list(dict.fromkeys(resolved)), unresolved
 
 
 def main() -> None:
@@ -60,8 +78,8 @@ def main() -> None:
                 else parse_csv(text, args.source.stem)
             )
             x = match_column(table.columns, args.x)
-            ys = [match_column(table.columns, y) for y in args.y]
-            if not x or any(y is None for y in ys):
+            ys, unresolved = resolve_y_columns(table, x, args.y)
+            if not x or unresolved or not ys:
                 parser.error(f"Choose unambiguous columns from: {', '.join(table.columns)}")
             print(json.dumps(render_plot(table, x, ys, args.output, args.chart_type)))
     except (ValueError, OSError) as exc:

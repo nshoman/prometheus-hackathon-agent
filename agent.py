@@ -12,7 +12,15 @@ from typing import Any
 from prometheus_api.agent import EventQueue, MissingInput, PrometheusAgent, RequestContext
 from prometheus_api.storage_client import ConnectionConfig
 
-from matching import is_vague, match_column, match_table, select_axes, select_table
+from matching import (
+    expand_columns,
+    is_vague,
+    match_column,
+    match_table,
+    select_axes,
+    select_table,
+    series_presets,
+)
 from plotting import render_plot
 from tables import Table, parse_csv, parse_markdown
 
@@ -193,18 +201,33 @@ class TablePlotAgent(PrometheusAgent):
         if not numeric_columns:
             raise ValueError("This table has no numeric columns to plot.")
         x_request = str(params.get("x_column") or "")
-        y_requests = params.get("y_columns") or (
-            [params["y_column"]] if params.get("y_column") else []
-        )
-        if isinstance(y_requests, str):
-            y_requests = [y_requests]
+        raw_y_columns = params.get("y_columns") or []
+        if isinstance(raw_y_columns, str):
+            raw_y_columns = [raw_y_columns]
+        y_requests = list(raw_y_columns)
+        if params.get("y_column"):
+            y_requests.append(str(params["y_column"]))
         x = match_column(table.columns, x_request) if x_request else None
-        ys = [match_column(table.columns, str(y)) for y in y_requests]
-        ys = (
-            list(dict.fromkeys(ys))
-            if ys and all(y in numeric_columns and y != x for y in ys)
-            else []
-        )
+        presets = dict(series_presets(numeric_columns, x))
+        ys: list[str] = []
+        unresolved: list[str] = []
+        for request in y_requests:
+            request = str(request)
+            if request.startswith("Keep just "):
+                continue  # The user chose not to add another series on a follow-up ask.
+            if request in presets:
+                ys.extend(presets[request])
+                continue
+            column = match_column(table.columns, request)
+            if column and column in numeric_columns and column != x:
+                ys.append(column)
+                continue
+            expanded = expand_columns(table.columns, numeric_columns, request, x)
+            if expanded:
+                ys.extend(expanded)
+                continue
+            unresolved.append(request)
+        ys = list(dict.fromkeys(ys))
         query = str(params.get("plot_query") or "")
         if (not x or not ys) and not is_vague(query):
             async with self.llm_client(context) as llm:
@@ -223,29 +246,59 @@ class TablePlotAgent(PrometheusAgent):
                     user_prompt="Which column goes on the x axis?",
                 )
             )
+        pending_params = dict(params)
+        if x:
+            pending_params["x_column"] = x
+        hint = "Choose the columns to plot; I will not guess unspecified axes."
         if not ys:
             candidates = [column for column in numeric_columns if column != x]
             if not candidates:
                 raise ValueError(
                     "There is no numeric y column distinct from the selected x column."
                 )
+            preset_options = [label for label, _ in series_presets(numeric_columns, x)]
             fields.append(
                 MissingInput(
                     name="y_column",
                     type="enum",
-                    options=candidates,
-                    description="Numeric columns available for the y axis.",
-                    user_prompt="Which column should I plot on the y axis?",
+                    options=[*preset_options, *candidates],
+                    description=(
+                        "Numeric columns available for the y axis; a group option plots "
+                        "several series at once."
+                    ),
+                    user_prompt="Which column(s) should I plot on the y axis?",
                 )
             )
-        if fields:
-            return await self._ask(
-                params,
-                context,
-                events,
-                fields,
-                "Choose the columns to plot; I will not guess unspecified axes.",
+            # Drop the requests that failed to resolve; don't replay them against the
+            # dropdown answer on resume.
+            pending_params["y_columns"] = []
+            pending_params.pop("y_column", None)
+        elif unresolved:
+            # Some requested series matched real columns; do not silently drop the rest.
+            # Keep the matches, ask only about what did not resolve.
+            candidates = [column for column in numeric_columns if column != x]
+            preset_options = [label for label, _ in series_presets(numeric_columns, x)]
+            skip_label = f"Keep just {', '.join(ys)}"
+            fields.append(
+                MissingInput(
+                    name="y_column",
+                    type="enum",
+                    options=[skip_label, *preset_options, *candidates],
+                    description=(
+                        "Numeric columns available for the y axis; pick a group, add one "
+                        "more series, or keep the ones already matched."
+                    ),
+                    user_prompt=(
+                        f"I could not match {', '.join(unresolved)} to a column. "
+                        "Add another series or keep what matched?"
+                    ),
+                )
             )
+            pending_params["y_columns"] = ys
+            pending_params.pop("y_column", None)
+            hint = f"{', '.join(unresolved)} did not match a column. {hint}"
+        if fields:
+            return await self._ask(pending_params, context, events, fields, hint)
         await self.send_status_update(
             context=context, event_queue=events, message=f"Plotting {', '.join(ys)} versus {x}."
         )
