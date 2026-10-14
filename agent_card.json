@@ -85,11 +85,7 @@
             "description": "Alias for deeplynx_file_id."
           }
         },
-        "anyOf": [
-          {"required": ["deeplynx_file_id"]},
-          {"required": ["file_id"]},
-          {"required": ["record_id"]}
-        ]
+        "required": ["deeplynx_file_id"]
       }
     },
     {
