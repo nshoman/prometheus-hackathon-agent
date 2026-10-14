@@ -26,7 +26,12 @@ def agent(monkeypatch):
     )
     instance.llm_client.return_value.__aexit__ = AsyncMock(return_value=False)
     instance._published = []
-    instance.send_json_artifact = AsyncMock(return_value="json-artifact")
+    async def send_json_artifact(*_, **kwargs):
+        if kwargs.get("name") == "deeplynx_search_results":
+            return "json-artifact"
+        return "table-list-artifact"
+
+    instance.send_json_artifact = AsyncMock(side_effect=send_json_artifact)
     instance.send_artifact_reference = AsyncMock(
         return_value=SimpleNamespace(artifact_id="conversation-file-artifact")
     )
