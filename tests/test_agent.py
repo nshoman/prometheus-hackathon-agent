@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -25,6 +26,10 @@ def agent(monkeypatch):
     )
     instance.llm_client.return_value.__aexit__ = AsyncMock(return_value=False)
     instance._published = []
+    instance.send_json_artifact = AsyncMock(return_value="json-artifact")
+    instance.send_artifact_reference = AsyncMock(
+        return_value=SimpleNamespace(artifact_id="conversation-file-artifact")
+    )
 
     from artifact_io import ConnectionConfig
 
@@ -36,6 +41,77 @@ def agent(monkeypatch):
 
     instance.send_deeplynx_artifact = publish
     return instance
+
+
+async def test_search_deeplynx_returns_records_and_publishes_json(
+    agent, context, event_queue, monkeypatch
+):
+    item = SimpleNamespace(
+        id=42,
+        name="hollowmere_almanac.md",
+        description="Annual rainfall and population tables.",
+        properties={"source": "challenge"},
+        tags=[SimpleNamespace(name="almanac")],
+        data_source_id=7,
+        created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 1, 2, tzinfo=timezone.utc),
+    )
+    page = SimpleNamespace(
+        items=[item],
+        page_info=SimpleNamespace(total_count=1),
+    )
+    storage = MagicMock()
+    storage.__aenter__ = AsyncMock(return_value=storage)
+    storage.__aexit__ = AsyncMock(return_value=False)
+    storage.search.query = AsyncMock(return_value=page)
+    monkeypatch.setattr("agent.ConnectionConfig.from_env", lambda: object())
+    monkeypatch.setattr("agent.AsyncStorageClient", lambda config: storage)
+
+    result = await agent._execute(
+        {"skill_id": "team1_search_deeplynx", "query": "the almanac"},
+        context,
+        event_queue,
+    )
+
+    assert result["status"] == "success"
+    assert result["result_count"] == 1
+    assert result["results"][0]["name"] == "hollowmere_almanac.md"
+    assert result["artifact_id"] == "json-artifact"
+    storage.search.query.assert_awaited_once_with("the almanac", page=1, page_size=20)
+    agent.send_json_artifact.assert_awaited_once()
+
+
+async def test_import_deeplynx_file_registers_conversation_artifact(
+    agent, context, event_queue, monkeypatch
+):
+    item = SimpleNamespace(
+        id=16,
+        name="hollowmere_almanac.md",
+        description="Markdown almanac.",
+        properties={"mime_type": "text/markdown", "original_filename": "hollowmere_almanac.md"},
+    )
+    file_meta = SimpleNamespace(name="hollowmere_almanac.md", size=7775)
+    storage = MagicMock()
+    storage.__aenter__ = AsyncMock(return_value=storage)
+    storage.__aexit__ = AsyncMock(return_value=False)
+    storage.items.get = AsyncMock(return_value=item)
+    storage.files.get = AsyncMock(return_value=file_meta)
+    config = SimpleNamespace(organization_id=1, project_id=1)
+    monkeypatch.setattr("agent.ConnectionConfig.from_env", lambda: config)
+    monkeypatch.setattr("agent.AsyncStorageClient", lambda _: storage)
+
+    result = await agent._execute(
+        {"skill_id": "team1_import_deeplynx_file", "file_id": 16},
+        context,
+        event_queue,
+    )
+
+    assert result["status"] == "success"
+    assert result["artifact_id"] == "conversation-file-artifact"
+    assert result["mime_type"] == "text/markdown"
+    kwargs = agent.send_artifact_reference.await_args.kwargs
+    assert kwargs["uri"] == "deeplynx://organizations/1/projects/1/items/16"
+    assert kwargs["metadata"]["deeplynx_file_id"] == 16
 
 
 async def test_extract_publishes_renderable_csv_without_an_llm(agent, context, event_queue):

@@ -34,6 +34,65 @@
       }
     },
     {
+      "id": "team1_search_deeplynx",
+      "name": "Team 1: search DeepLynx",
+      "description": "Search the configured DeepLynx project for records by name, description, or indexed properties and return the actual matching records.",
+      "usage_notes": "Use when the user asks to find a document or record in DeepLynx, such as an almanac. Pass the user's search wording as query. Do not claim that DeepLynx is unavailable when this skill is registered; report its actual result or configuration error.",
+      "requires_approval": false,
+      "expected_duration_seconds": 10,
+      "output_format": "JSON with matching DeepLynx records and a cataloged JSON artifact_id.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Text to search for in the configured DeepLynx project. Preserve the user's terms."
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 20,
+            "description": "Maximum number of matching records to return."
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    },
+    {
+      "id": "team1_import_deeplynx_file",
+      "name": "Team 1: import a DeepLynx file",
+      "description": "Expose a DeepLynx file record as a conversation-scoped artifact that downstream table and plot skills can read.",
+      "usage_notes": "Use after team1_search_deeplynx when a result includes file_id. Pass that numeric file_id; do not pass the DeepLynx record ID as a conversation artifact_id. Then pass the returned artifact_id to team1_list_tables or team1_extract_table.",
+      "requires_approval": false,
+      "expected_duration_seconds": 10,
+      "output_format": "JSON with conversation artifact_id, deeplynx_file_id, name, mime_type and size_bytes.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "deeplynx_file_id": {
+            "type": "integer",
+            "description": "DeepLynx file/record ID from team1_search_deeplynx results."
+          },
+          "file_id": {
+            "type": "integer",
+            "description": "Alias for deeplynx_file_id."
+          },
+          "record_id": {
+            "type": "integer",
+            "description": "Alias for deeplynx_file_id."
+          }
+        },
+        "anyOf": [
+          {"required": ["deeplynx_file_id"]},
+          {"required": ["file_id"]},
+          {"required": ["record_id"]}
+        ]
+      }
+    },
+    {
       "id": "team1_plot_table",
       "name": "Team 1: plot tabular data",
       "description": "Render a PNG plot from an extracted table artifact or an uploaded CSV/TSV. Match requested column names and ask with actual column dropdowns when unspecified.",

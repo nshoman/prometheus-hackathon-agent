@@ -49,7 +49,7 @@ class TableCapabilities:
         query = str(params.get("table_query") or "")
         index = choices.index(chosen) if chosen in choices else match_table(tables, query)
         if index is None and query.strip():
-            async with self.agent.llm_client(context) as llm:
+            async with self.agent.llm_client(context, config=self.agent._llm_config()) as llm:
                 index = await select_table(llm, tables, query)
         if index is None:
             return await self.io._ask(
@@ -120,7 +120,7 @@ class TableCapabilities:
         )
         query = str(params.get("plot_query") or "")
         if (not x or not ys) and not is_vague(query):
-            async with self.agent.llm_client(context) as llm:
+            async with self.agent.llm_client(context, config=self.agent._llm_config()) as llm:
                 selected = await select_axes(llm, table, query)
             if selected:
                 x = x or selected[0]
