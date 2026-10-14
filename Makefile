@@ -1,5 +1,3 @@
-COMPOSE := docker compose
-
 SDK_PATH ?= ../prometheus_core/sdk
 .PHONY: dev-setup test lint
 dev-setup:
@@ -11,6 +9,14 @@ test:
 
 lint:
 	uv run ruff check .
+
+# Set CONTAINER_RUNTIME=docker or CONTAINER_RUNTIME=podman to override the
+# automatic selection. Prefer a reachable Docker daemon; otherwise use Podman.
+CONTAINER_RUNTIME ?= $(shell if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then printf docker; elif command -v podman >/dev/null 2>&1; then printf podman; else printf docker; fi)
+
+# Avoid stale Docker Desktop credential helpers when Podman invokes Compose.
+COMPOSE_CONFIG := $(if $(DOCKER_CONFIG),DOCKER_CONFIG=$(DOCKER_CONFIG),DOCKER_CONFIG=$$(mktemp -d))
+COMPOSE := $(COMPOSE_CONFIG) $(CONTAINER_RUNTIME) compose
 
 UNAME   := $(shell uname)
 
@@ -73,7 +79,7 @@ validate-network:
 ifeq ($(NETWORK_MODE),invalid)
 	$(error EXTERNAL_AGENT_HOST and EXTERNAL_AGENT_PORT must be set together, or neither set)
 else ifeq ($(NETWORK_MODE),internal)
-	@if [ -z "$$(docker network ls -q -f name=^prometheus_platform_agent-network$$)" ]; then \
+	@if [ -z "$$($(CONTAINER_RUNTIME) network ls -q -f name=^prometheus_platform_agent-network$$)" ]; then \
 		echo "\nThe Prometheus Platform must be launched first when internal network mode is selected."; \
 		echo "For standalone agent testing/debugging launch with:"; \
 		echo "EXTERNAL_AGENT_HOST=localhost EXTERNAL_AGENT_PORT=8000 make $(MAKECMDGOALS)\n"; \

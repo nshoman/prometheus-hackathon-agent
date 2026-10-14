@@ -4,11 +4,13 @@ Extract captioned Markdown tables and plot CSV/TSV or table artifacts through Pr
 
 ## Skills
 
-| Skill ID              | Input                                   | Output                     |
-| --------------------- | --------------------------------------- | -------------------------- |
-| `team1_extract_table` | Markdown artifact and table description | Exact CSV table artifact   |
-| `team1_plot_table`    | Table/CSV artifact and requested axes   | PNG artifact in DeepLynx   |
-| `team1_list_tables`   | Markdown artifact                       | Captions, headers and rows |
+| Skill ID | Input | Output |
+|---|---|---|
+| `team1_extract_table` | Markdown artifact ID and a caption/subject description | A CSV table artifact, exact headers/values, caption and row count |
+| `team1_search_deeplynx` | DeepLynx text query | Matching DeepLynx records and a cataloged JSON result artifact |
+| `team1_import_deeplynx_file` | DeepLynx file/record ID from search results | A conversation-scoped artifact usable by extraction and plotting |
+| `team1_plot_table` | Extracted table artifact or uploaded CSV/TSV; requested axes | A PNG artifact stored in DeepLynx |
+| `team1_list_tables` | Markdown artifact ID | Actual captions, columns, row counts and source lines |
 
 The Docker container is `team1-table-plot-agent`. It joins `prometheus_platform_agent-network` and registers its card and workflow, `team1.extract_then_plot`, through the SDK.
 
@@ -31,6 +33,10 @@ The parser ignores fenced code, supports wrapped bold captions and escaped pipes
 Matching first checks exact headers and generic lexical overlap. It preserves case-sensitive symbols, without dictionaries that assign topics or meanings to them. Paraphrases and symbols with units use one bounded LLM tool call over real candidates; row values are never sent to the model. Ambiguous requests produce actual-caption or actual-column choices. Extraction parses all tables before deciding whether there is a single candidate.
 
 Plots support line, scatter and grouped bars. Time-like axis metadata informs automatic style; explicit `chart_type` overrides it. Numeric x values are sorted only for plotting. Missing readings remain gaps and incompatible y units use separate panels. Rendering uses isolated Matplotlib Agg figures in a worker thread.
+
+`team1_search_deeplynx` searches the configured project through the Prometheus SDK's authenticated storage client. It returns record metadata and publishes the complete result set as a JSON artifact, which can be used as the input to a later table or file-processing step.
+
+`team1_import_deeplynx_file` converts a `file_id` from those results into a conversation-scoped `deeplynx://` artifact reference. Pass its returned `artifact_id` to `team1_list_tables` or `team1_extract_table`; do not pass the numeric DeepLynx ID as the conversation artifact ID.
 
 ## Setup and run
 
